@@ -148,17 +148,26 @@ jobs:
       - name: Daemon drops root after binding its sockets
         run: |
           set -x
+          command -v dig || sudo apt-get install -y --no-install-recommends dnsutils
+          # A plain `systemctl stop` gives the system its previous resolvers
+          # back (ExecStopPost), so DNS never points at a stopped daemon.
           sudo systemctl stop fuck-ads
+          sudo resolvectl flush-caches || true
+          ! getent ahostsv4 fuck-ads-probe.test
+          getent ahostsv4 example.com
           sudo install -d -o fuck-ads -g fuck-ads /run/fuck-ads
           sudo sh -c "setsid $(command -v fuck-ads) daemon >/tmp/fuck-ads-root.log 2>&1 &"
           for i in $(seq 1 30); do [ -S /run/fuck-ads/control.sock ] && break; sleep 1; done
           PID=$(pgrep -x fuck-ads | head -1)
           test -n "$PID"
           test "$(ps -o user= -p "$PID" | tr -d ' ')" = fuck-ads
-          getent ahostsv4 fuck-ads-probe.test | grep -q 127.0.0.209
+          dig +short +time=2 @127.0.0.1 fuck-ads-probe.test A | grep -qx 127.0.0.209
           sudo kill "$PID"
           sleep 2
+          # Starting the service routes system DNS through it again (ExecStartPost).
           sudo systemctl start fuck-ads
+          sudo resolvectl flush-caches || true
+          getent ahostsv4 fuck-ads-probe.test | grep -q 127.0.0.209
       - name: Disable restores DNS
         run: |
           sudo fuck-ads disable
