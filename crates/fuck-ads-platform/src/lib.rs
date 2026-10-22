@@ -388,6 +388,18 @@ mod tests {
     }
 
     #[test]
+    fn unit_hooks_use_the_installed_binary() {
+        let unit = render_service_template(
+            include_str!("../../../platforms/linux/fuck-ads.service"),
+            Path::new("/usr/bin/fuck-ads"),
+        )
+        .unwrap();
+        assert!(!unit.contains("/usr/local/bin"));
+        assert!(unit.contains("ExecStartPost=-+/usr/bin/fuck-ads _sync-dns\n"));
+        assert!(unit.contains("ExecStopPost=-+/usr/bin/fuck-ads _sync-dns\n"));
+    }
+
+    #[test]
     fn templates() {
         let out = render_service_template(
             "ExecStart=/usr/local/bin/fuck-ads daemon",

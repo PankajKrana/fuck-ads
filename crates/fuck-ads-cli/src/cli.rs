@@ -90,6 +90,10 @@ pub enum Command {
     /// Run the daemon in the foreground (used by systemd/launchd).
     #[command(hide = true)]
     Daemon,
+    /// Route system DNS through the daemon if it answers, restore it if not
+    /// (run by the service manager when the daemon starts or stops).
+    #[command(name = "_sync-dns", hide = true)]
+    SyncDns,
     /// Browser native-messaging host (started by the browser).
     #[command(hide = true)]
     NativeHost {

@@ -1,6 +1,9 @@
 [Unit]
 Description=FuckAds ad and tracker blocking DNS service
 Documentation=https://github.com/PankajKrana/fuck-ads
+# Give up after 5 failed starts in a minute instead of looping forever.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 After=network.target
 Wants=network.target
 # Start before name lookups are needed by other services.
@@ -15,6 +18,13 @@ Restart=on-failure
 RestartSec=2
 # 78 = invalid configuration: do not restart in a loop.
 RestartPreventExitStatus=78
+# Route system DNS through the daemon once it is ready, and give the previous
+# resolvers back whenever it stops for any reason (crash, failed start, plain
+# `systemctl stop`), so a dead daemon never leaves the machine without DNS.
+# `+` runs these as root outside the sandbox; `-` keeps a failure from
+# failing the unit.
+ExecStartPost=-+/usr/local/bin/fuck-ads _sync-dns
+ExecStopPost=-+/usr/local/bin/fuck-ads _sync-dns
 
 # Unprivileged service account; only allowed to bind port 53.
 User=fuck-ads

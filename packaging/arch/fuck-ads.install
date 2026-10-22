@@ -6,6 +6,7 @@ post_upgrade() {
     systemctl try-restart fuck-ads.service >/dev/null 2>&1 || true
 }
 pre_remove() {
-    /usr/bin/fuck-ads disable >/dev/null 2>&1 || true
+    # If disable fails, stopping still restores DNS through the unit's ExecStopPost.
+    /usr/bin/fuck-ads disable >/dev/null 2>&1 || systemctl disable --now fuck-ads.service >/dev/null 2>&1 || true
     /usr/bin/fuck-ads browser uninstall --system >/dev/null 2>&1 || true
 }
