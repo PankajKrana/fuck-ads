@@ -32,9 +32,11 @@ impl Ctx {
             Paths::system()
         };
         // Developer convenience: with no system service, talk to a per-user
-        // daemon if one is running.
+        // daemon if one is running. Never as root: privileged commands would
+        // then keep the system DNS backup in a user's home directory.
         if !user
             && !explicit_config
+            && !fuck_ads_platform::is_root()
             && !paths.socket.exists()
             && let Ok(user_paths) = Paths::user()
             && user_paths.socket.exists()

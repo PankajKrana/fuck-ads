@@ -328,6 +328,12 @@ impl Daemon {
                 _ = shutdown.changed() => return,
             }
             let outcome = self.updater.run(&self.config, &self.filter, false).await;
+            if let Some(r) = &self.resolver
+                && outcome.activated
+            {
+                // Cached answers may reflect the old rules.
+                r.cache().clear();
+            }
             if !outcome.failed.is_empty() || outcome.error.is_some() {
                 tracing::warn!(summary = %outcome.summary(), "filter update incomplete; retaining previous rules where needed");
             } else {

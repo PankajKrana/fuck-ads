@@ -232,7 +232,9 @@ impl Platform for MacOs {
             bail!("non-macOS DNS backup on macOS")
         };
         let mut errors = Vec::new();
-        let existing = network_services().unwrap_or_default();
+        // Without the list every service would be skipped and the restore
+        // would wrongly report success, dropping the backup.
+        let existing = network_services().context("cannot list network services")?;
         for (service, previous) in services {
             if !existing.contains(service) {
                 continue; // service was removed meanwhile
@@ -308,7 +310,7 @@ impl Platform for MacOs {
     }
 
     fn proxy_restore(&self, backup: &ProxyBackup) -> Result<()> {
-        let existing = network_services().unwrap_or_default();
+        let existing = network_services().context("cannot list network services")?;
         let mut errors = Vec::new();
         for s in &backup.services {
             if !existing.contains(&s.service) {

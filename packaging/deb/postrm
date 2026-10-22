@@ -1,7 +1,15 @@
 #!/bin/sh
 set -e
+STATE=/var/lib/fuck-ads/system-state.json
 if [ "$1" = "purge" ]; then
-    rm -rf /var/lib/fuck-ads /etc/fuck-ads
+    # The state file holds the only copy of the previous DNS settings: keep
+    # it while it still records a change that was not undone.
+    if [ -f "$STATE" ] && ! grep -q '"dns": null' "$STATE"; then
+        echo "fuck-ads: keeping $STATE: it still holds the previous DNS settings" >&2
+        rm -rf /var/lib/fuck-ads/data /etc/fuck-ads
+    else
+        rm -rf /var/lib/fuck-ads /etc/fuck-ads
+    fi
     getent passwd fuck-ads >/dev/null && deluser --system fuck-ads >/dev/null 2>&1 || true
 fi
 systemctl daemon-reload >/dev/null 2>&1 || true

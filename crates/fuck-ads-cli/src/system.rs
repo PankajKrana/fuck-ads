@@ -249,6 +249,7 @@ pub async fn enforce_dns(ctx: &Ctx, action: &EnforceDnsAction) -> Result<()> {
         }
         EnforceDnsAction::Off => {
             require_root("enforce-dns off")?;
+            let _lock = StateLock::acquire(ctx)?;
             let mut state = SystemState::load(&ctx.paths.system_state_file())?;
             if state.firewall.is_none() && !platform.firewall_active() {
                 if state.enforce_dns {
@@ -268,6 +269,7 @@ pub async fn enforce_dns(ctx: &Ctx, action: &EnforceDnsAction) -> Result<()> {
         }
         EnforceDnsAction::On => {
             require_root("enforce-dns on")?;
+            let _lock = StateLock::acquire(ctx)?;
             let mut state = SystemState::load(&ctx.paths.system_state_file())?;
             let Some(uid) = service_uid() else {
                 bail!(
@@ -477,6 +479,7 @@ pub async fn proxy(ctx: &Ctx, action: &ProxyAction) -> Result<()> {
         }
         ProxyAction::Off => {
             require_root("proxy off")?;
+            let _lock = StateLock::acquire(ctx)?;
             let mut state = SystemState::load(&ctx.paths.system_state_file())?;
             let had = state.proxy.is_some();
             remove_proxy_setting(ctx, platform.as_ref(), &mut state)?;
@@ -491,6 +494,7 @@ pub async fn proxy(ctx: &Ctx, action: &ProxyAction) -> Result<()> {
         }
         ProxyAction::On => {
             require_root("proxy on")?;
+            let _lock = StateLock::acquire(ctx)?;
             let config = ctx.config().context("the configuration file is invalid")?;
             if !config.proxy.enabled {
                 bail!(
@@ -532,6 +536,7 @@ pub async fn proxy(ctx: &Ctx, action: &ProxyAction) -> Result<()> {
 
 pub async fn enable(ctx: &Ctx) -> Result<()> {
     require_root("enable")?;
+    let _lock = StateLock::acquire(ctx)?;
     let config = ctx
         .config()
         .context("the configuration file is invalid; fix it before enabling")?;
@@ -587,6 +592,7 @@ fn ensure_native_host_link(exe: &Path) -> Result<std::path::PathBuf> {
 
 pub async fn disable(ctx: &Ctx) -> Result<()> {
     require_root("disable")?;
+    let _lock = StateLock::acquire(ctx)?;
     let platform = fuck_ads_platform::current();
     let state_file = ctx.paths.system_state_file();
     let mut state = SystemState::load(&state_file)?;
@@ -607,6 +613,7 @@ pub async fn disable(ctx: &Ctx) -> Result<()> {
 
 pub async fn start(ctx: &Ctx) -> Result<()> {
     require_root("start")?;
+    let _lock = StateLock::acquire(ctx)?;
     let platform = fuck_ads_platform::current();
     let state_file = ctx.paths.system_state_file();
     let mut state = SystemState::load(&state_file)?;
@@ -654,6 +661,7 @@ pub async fn start(ctx: &Ctx) -> Result<()> {
 
 pub async fn stop(ctx: &Ctx) -> Result<()> {
     require_root("stop")?;
+    let _lock = StateLock::acquire(ctx)?;
     let platform = fuck_ads_platform::current();
     let mut state = SystemState::load(&ctx.paths.system_state_file())?;
     // Never leave the system pointing at a resolver that is not running, or
@@ -668,14 +676,169 @@ pub async fn stop(ctx: &Ctx) -> Result<()> {
 
 pub async fn restart(ctx: &Ctx) -> Result<()> {
     require_root("restart")?;
+    let _lock = StateLock::acquire(ctx)?;
     let platform = fuck_ads_platform::current();
     if platform.service_status() == ServiceStatus::NotInstalled {
         bail!("the fuck-ads service is not installed");
     }
+    // A daemon that refuses its configuration would leave system DNS
+    // pointing at nothing, so check it before taking the running one down.
+    let config = ctx
+        .config()
+        .context("the configuration file is invalid; the running service was left unchanged")?;
+    let state_file = ctx.paths.system_state_file();
+    let mut state = SystemState::load(&state_file)?;
     platform.service_restart()?;
-    wait_healthy(ctx, Duration::from_secs(30)).await?;
+    let reported = match wait_healthy(ctx, Duration::from_secs(30)).await {
+        Ok(reported) => reported,
+        Err(e) => {
+            fail_open(ctx, platform.as_ref(), &mut state);
+            return Err(e);
+        }
+    };
     step(ctx, "Service restarted");
+    // The configuration may have turned DNS filtering off or moved the
+    // listener, so make system DNS match what is running now.
+    let listen = trusted_listen(&config, &reported);
+    if state.enabled && !listen.is_empty() {
+        apply_dns(ctx, platform.as_ref(), &mut state, &listen).await?;
+    } else if state.dns.is_some() {
+        remove_firewall(ctx, platform.as_ref(), &mut state)?;
+        restore_dns(ctx, platform.as_ref(), &mut state)?;
+    }
     Ok(())
+}
+
+/// Puts the system back on its own resolvers when the daemon is not
+/// answering, so a broken service never takes name resolution down with it.
+/// `state.enabled` is kept: the next successful start routes DNS again. The
+/// system proxy setting is left alone because the PAC file already falls
+/// back to DIRECT while the proxy is down.
+fn fail_open(ctx: &Ctx, platform: &dyn Platform, state: &mut SystemState) {
+    // The bypass rules must go first, or they would block the resolvers the
+    // system is about to go back to.
+    if let Err(e) = remove_firewall(ctx, platform, state) {
+        eprintln!("{} {e:#}", ctx.style.red("✗"));
+    }
+    if let Err(e) = restore_dns(ctx, platform, state) {
+        eprintln!("{} {e:#}", ctx.style.red("✗"));
+    }
+}
+
+/// Run by the service manager whenever the daemon starts or stops
+/// (`ExecStartPost`/`ExecStopPost`): routes system DNS through FuckAds while
+/// the daemon answers and restores the previous settings while it does not.
+/// It does nothing while another fuck-ads command is changing the settings.
+pub async fn sync_dns(ctx: &Ctx) -> Result<()> {
+    require_root("_sync-dns")?;
+    let Some(_lock) = StateLock::try_acquire(ctx)? else {
+        return Ok(());
+    };
+    // At shutdown the settings stay as they are: they are checked again when
+    // the service starts at boot, and resolvers cannot be restarted reliably
+    // while the system is going down.
+    if system_shutting_down() {
+        return Ok(());
+    }
+    let platform = fuck_ads_platform::current();
+    let mut state = SystemState::load(&ctx.paths.system_state_file())?;
+    if !state.enabled {
+        return Ok(());
+    }
+    let reported = match ctx.request(Request::Status).await {
+        Ok(Response::Status(s)) if s.dns_enabled => {
+            let addrs: Vec<SocketAddr> =
+                s.dns_listen.iter().filter_map(|a| a.parse().ok()).collect();
+            let mut answering = Vec::new();
+            for addr in addrs {
+                if fuck_ads_dns::probe(addr, Duration::from_secs(2)).await {
+                    answering.push(addr);
+                }
+            }
+            answering
+        }
+        _ => Vec::new(),
+    };
+    let listen = match ctx.config() {
+        Ok(config) => trusted_listen(&config, &reported),
+        Err(_) => Vec::new(),
+    };
+    if listen.is_empty() {
+        fail_open(ctx, platform.as_ref(), &mut state);
+        return Ok(());
+    }
+    apply_dns(ctx, platform.as_ref(), &mut state, &listen).await?;
+    if state.enforce_dns
+        && state.firewall.is_none()
+        && let Some(uid) = service_uid()
+    {
+        apply_firewall(
+            ctx,
+            platform.as_ref(),
+            &mut state,
+            &FirewallPlan { daemon_uid: uid },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn system_shutting_down() -> bool {
+    cfg!(target_os = "linux")
+        && std::process::Command::new("systemctl")
+            .arg("is-system-running")
+            .output()
+            .is_ok_and(|o| o.stdout.starts_with(b"stopping"))
+}
+
+/// Serializes the commands that change system DNS settings, including the
+/// service manager's `_sync-dns` hooks, through an advisory lock next to the
+/// state file. Released when dropped.
+struct StateLock(#[allow(dead_code)] std::fs::File);
+
+impl StateLock {
+    fn open(ctx: &Ctx) -> Result<std::fs::File> {
+        let path = ctx.paths.system_state_file().with_extension("lock");
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("cannot create {}", dir.display()))?;
+        }
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("cannot open {}", path.display()))
+    }
+
+    fn lock(file: &std::fs::File, flags: libc::c_int) -> std::io::Result<()> {
+        use std::os::fd::AsRawFd;
+        // SAFETY: flock on a descriptor we own; no memory is passed.
+        if unsafe { libc::flock(file.as_raw_fd(), flags) } == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+
+    /// Waits for the lock.
+    fn acquire(ctx: &Ctx) -> Result<StateLock> {
+        let file = Self::open(ctx)?;
+        Self::lock(&file, libc::LOCK_EX).context("cannot lock the system state")?;
+        Ok(StateLock(file))
+    }
+
+    /// Takes the lock only if no other command holds it. Never waits: the
+    /// service manager runs `_sync-dns` while `start`/`stop` hold the lock
+    /// and wait for the service manager.
+    fn try_acquire(ctx: &Ctx) -> Result<Option<StateLock>> {
+        let file = Self::open(ctx)?;
+        match Self::lock(&file, libc::LOCK_EX | libc::LOCK_NB) {
+            Ok(()) => Ok(Some(StateLock(file))),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(e) => Err(anyhow::Error::new(e).context("cannot lock the system state")),
+        }
+    }
 }
 
 fn confirm(prompt: &str) -> bool {
@@ -702,6 +865,7 @@ fn remove_known_dir(path: &Path, allowed: &[&str]) {
 
 pub async fn uninstall(ctx: &Ctx, yes: bool, purge: bool) -> Result<()> {
     require_root("uninstall")?;
+    let _lock = StateLock::acquire(ctx)?;
     if !yes && !confirm("Remove FuckAds and restore the original DNS settings?") {
         println!("Cancelled.");
         return Ok(());
@@ -723,12 +887,20 @@ pub async fn uninstall(ctx: &Ctx, yes: bool, purge: bool) -> Result<()> {
             ctx.style.red("✗")
         );
     }
-    if let Err(e) = restore_dns(ctx, platform.as_ref(), &mut state) {
-        eprintln!(
-            "{} could not restore DNS automatically: {e:#}",
-            ctx.style.red("✗")
-        );
-    }
+    // The state file holds the only copy of the previous DNS settings; it
+    // is kept if they could not be put back.
+    let dns_restored = match restore_dns(ctx, platform.as_ref(), &mut state) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!(
+                "{} could not restore DNS automatically: {e:#}\n  The backup of the previous \
+                 settings is kept in {}",
+                ctx.style.red("✗"),
+                system.system_state_file().display()
+            );
+            false
+        }
+    };
     platform.remove_service()?;
     step(ctx, "Service removed");
     for p in browser::uninstall(&browser::system_locations()) {
@@ -741,8 +913,10 @@ pub async fn uninstall(ctx: &Ctx, yes: bool, purge: bool) -> Result<()> {
             Path::new(&format!("{base}/data")),
             &[&format!("{base}/data")],
         );
-        let _ = std::fs::remove_file(format!("{base}/system-state.json"));
-        if purge {
+        if dns_restored {
+            let _ = std::fs::remove_file(format!("{base}/system-state.json"));
+        }
+        if purge && dns_restored {
             remove_known_dir(Path::new(base), &[base]);
         }
         remove_known_dir(
@@ -751,7 +925,14 @@ pub async fn uninstall(ctx: &Ctx, yes: bool, purge: bool) -> Result<()> {
         );
         let _ = std::fs::remove_file("/etc/newsyslog.d/fuck-ads.conf");
     } else {
-        remove_known_dir(Path::new("/var/lib/fuck-ads"), &["/var/lib/fuck-ads"]);
+        if dns_restored {
+            remove_known_dir(Path::new("/var/lib/fuck-ads"), &["/var/lib/fuck-ads"]);
+        } else {
+            remove_known_dir(
+                Path::new("/var/lib/fuck-ads/data"),
+                &["/var/lib/fuck-ads/data"],
+            );
+        }
         if purge {
             remove_known_dir(Path::new("/etc/fuck-ads"), &["/etc/fuck-ads"]);
         }
@@ -787,6 +968,29 @@ pub async fn uninstall(ctx: &Ctx, yes: bool, purge: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ctx_in(dir: &Path) -> Ctx {
+        let mut paths = fuck_ads_config::Paths::system();
+        paths.system_dir = dir.to_path_buf();
+        Ctx {
+            paths,
+            json: true,
+            style: crate::output::Style { color: false },
+            explicit_config: false,
+        }
+    }
+
+    #[test]
+    fn sync_hook_skips_while_another_command_holds_the_state_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_in(dir.path());
+        let held = StateLock::acquire(&ctx).unwrap();
+        // flock locks belong to the open file description, so a second open
+        // in the same process contends like another process would.
+        assert!(StateLock::try_acquire(&ctx).unwrap().is_none());
+        drop(held);
+        assert!(StateLock::try_acquire(&ctx).unwrap().is_some());
+    }
 
     #[test]
     fn only_configured_loopback_addresses_are_trusted() {
