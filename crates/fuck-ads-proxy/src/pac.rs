@@ -1,7 +1,7 @@
 //! The proxy auto-config (PAC) file clients use to find the proxy.
 //!
-//! Local destinations (plain host names, `.local`/`.lan`, private and IPv6
-//! literals) go DIRECT, so the proxy's refusal to connect to local addresses
+//! Local destinations (plain host names, `.local`/`.lan`, IPv6 literals, and
+//! names or addresses in private ranges) go DIRECT, so the proxy's refusal to connect to local addresses
 //! never affects normal use. Everything else goes to the proxy with a DIRECT
 //! fallback, so a stopped proxy cannot take the machine offline.
 
@@ -16,13 +16,16 @@ pub fn pac_script(addr: SocketAddr) -> String {
       shExpMatch(host, "*.home.arpa") || host.indexOf(":") !== -1) {{
     return "DIRECT";
   }}
-  if (/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(host) &&
-      (isInNet(host, "10.0.0.0", "255.0.0.0") ||
-       isInNet(host, "172.16.0.0", "255.240.0.0") ||
-       isInNet(host, "192.168.0.0", "255.255.0.0") ||
-       isInNet(host, "169.254.0.0", "255.255.0.0") ||
-       isInNet(host, "100.64.0.0", "255.192.0.0") ||
-       isInNet(host, "127.0.0.0", "255.0.0.0"))) {{
+  // Names that resolve to private addresses (intranets, routers, Tailscale)
+  // go DIRECT too: the proxy refuses to connect to them.
+  var ip = /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(host) ? host : dnsResolve(host);
+  if (ip &&
+      (isInNet(ip, "10.0.0.0", "255.0.0.0") ||
+       isInNet(ip, "172.16.0.0", "255.240.0.0") ||
+       isInNet(ip, "192.168.0.0", "255.255.0.0") ||
+       isInNet(ip, "169.254.0.0", "255.255.0.0") ||
+       isInNet(ip, "100.64.0.0", "255.192.0.0") ||
+       isInNet(ip, "127.0.0.0", "255.0.0.0"))) {{
     return "DIRECT";
   }}
   return "PROXY {addr}; DIRECT";
@@ -42,6 +45,10 @@ mod tests {
         assert!(s.contains(r#"return "PROXY 127.0.0.1:8118; DIRECT";"#));
         assert!(s.contains("isPlainHostName(host)"));
         assert!(s.contains("192.168.0.0"));
+        assert!(
+            s.contains("dnsResolve(host)"),
+            "private names must go DIRECT"
+        );
     }
 
     #[test]

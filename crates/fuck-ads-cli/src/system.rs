@@ -890,7 +890,14 @@ pub async fn uninstall(ctx: &Ctx, yes: bool, purge: bool) -> Result<()> {
     // Use the built-in system locations, never configurable overrides, for
     // anything that is deleted recursively.
     let system = fuck_ads_config::Paths::system();
-    let mut state = SystemState::load(&system.system_state_file()).unwrap_or_default();
+    // A corrupt file must not read as "nothing to restore": the folder that
+    // holds it is deleted below.
+    let mut state = SystemState::load(&system.system_state_file()).with_context(|| {
+        format!(
+            "cannot read {}, which holds the backup of your DNS settings; nothing was removed",
+            system.system_state_file().display()
+        )
+    })?;
     if let Err(e) = remove_firewall(ctx, platform.as_ref(), &mut state) {
         eprintln!(
             "{} could not remove the DNS bypass rules automatically: {e:#}",
@@ -903,20 +910,16 @@ pub async fn uninstall(ctx: &Ctx, yes: bool, purge: bool) -> Result<()> {
             ctx.style.red("✗")
         );
     }
-    // The state file holds the only copy of the previous DNS settings; it
-    // is kept if they could not be put back.
-    let dns_restored = match restore_dns(ctx, platform.as_ref(), &mut state) {
-        Ok(()) => true,
-        Err(e) => {
-            eprintln!(
-                "{} could not restore DNS automatically: {e:#}\n  The backup of the previous \
-                 settings is kept in {}",
-                ctx.style.red("✗"),
-                system.system_state_file().display()
-            );
-            false
-        }
-    };
+    // Removing the service while system DNS still points at it would leave
+    // the machine without name resolution, so stop here instead.
+    if let Err(e) = restore_dns(ctx, platform.as_ref(), &mut state) {
+        bail!(
+            "could not restore DNS automatically: {e:#}\nThe service was left installed so name \
+             resolution keeps working; the backup of the previous settings is in {}. Fix the \
+             problem and run uninstall again.",
+            system.system_state_file().display()
+        );
+    }
     platform.remove_service()?;
     step(ctx, "Service removed");
     for p in browser::uninstall(&browser::system_locations()) {
@@ -933,10 +936,8 @@ pub async fn uninstall(ctx: &Ctx, yes: bool, purge: bool) -> Result<()> {
             Path::new(&format!("{base}/data")),
             &[&format!("{base}/data")],
         );
-        if dns_restored {
-            let _ = std::fs::remove_file(format!("{base}/system-state.json"));
-        }
-        if purge && dns_restored {
+        let _ = std::fs::remove_file(format!("{base}/system-state.json"));
+        if purge {
             remove_known_dir(Path::new(base), &[base]);
         }
         remove_known_dir(
@@ -945,14 +946,7 @@ pub async fn uninstall(ctx: &Ctx, yes: bool, purge: bool) -> Result<()> {
         );
         let _ = std::fs::remove_file("/etc/newsyslog.d/fuck-ads.conf");
     } else {
-        if dns_restored {
-            remove_known_dir(Path::new("/var/lib/fuck-ads"), &["/var/lib/fuck-ads"]);
-        } else {
-            remove_known_dir(
-                Path::new("/var/lib/fuck-ads/data"),
-                &["/var/lib/fuck-ads/data"],
-            );
-        }
+        remove_known_dir(Path::new("/var/lib/fuck-ads"), &["/var/lib/fuck-ads"]);
         if purge {
             remove_known_dir(Path::new("/etc/fuck-ads"), &["/etc/fuck-ads"]);
         }

@@ -81,8 +81,10 @@ impl DnsCache {
         let mut entries = self.lock();
         if entries.len() >= self.capacity && !entries.contains_key(&key) {
             entries.retain(|_, e| e.expires > now);
-            if entries.len() >= self.capacity {
-                // Still full: evict an arbitrary eighth. HashMap iteration
+            // Evict unless the purge freed real headroom; otherwise the next
+            // insert would scan the whole cache again.
+            if entries.len() >= self.capacity - self.capacity / 8 {
+                // Nearly full: evict an arbitrary eighth. HashMap iteration
                 // order is randomized, so this approximates random eviction
                 // at O(1) amortized cost without LRU bookkeeping on hits.
                 let victims: Vec<CacheKey> = entries

@@ -141,7 +141,9 @@ if [ -d "$WORK/pkg/share/browser" ]; then
 fi
 
 $SUDO install -d -m 0755 "$BASE_DIR"
-$SUDO install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$BASE_DIR/data" "$LOG_DIR"
+$SUDO install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$BASE_DIR/data"
+# Root-owned: launchd and newsyslog write the log here as root.
+$SUDO install -d -m 0755 -o root -g wheel "$LOG_DIR"
 if [ ! -f "$BASE_DIR/config.toml" ]; then
     "$WORK/pkg/fuck-ads" config default > "$WORK/config.toml"
     $SUDO install -m 0644 "$WORK/config.toml" "$BASE_DIR/config.toml"

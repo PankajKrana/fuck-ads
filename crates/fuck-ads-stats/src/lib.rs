@@ -121,18 +121,6 @@ impl StatsStore {
         }
     }
 
-    pub fn set_options(&self, enabled: bool, record_domains: bool) {
-        self.enabled.store(enabled, Ordering::Relaxed);
-        self.record_domains.store(record_domains, Ordering::Relaxed);
-        if !record_domains {
-            let mut days = self.lock();
-            for d in days.values_mut() {
-                d.blocked_domains.clear();
-            }
-            self.dirty.store(true, Ordering::Relaxed);
-        }
-    }
-
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, DayStats>> {
         // A panic while holding the lock leaves counters consistent enough.
         self.days.lock().unwrap_or_else(|e| e.into_inner())
@@ -191,10 +179,6 @@ impl StatsStore {
             total.merge(d);
         }
         total
-    }
-
-    pub fn all_time(&self) -> DayStats {
-        self.last_days(usize::MAX)
     }
 
     pub fn reset(&self) {

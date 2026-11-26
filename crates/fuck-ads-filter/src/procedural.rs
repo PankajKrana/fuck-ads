@@ -283,12 +283,14 @@ pub fn validate_regex(pattern: &str, flags: &str) -> Result<(), ParseError> {
 }
 
 /// Conservative scan for patterns a backtracking engine can blow up on:
-/// backreferences, lookaround, named/non-trivial `(?` groups, and a
-/// quantified group that itself contains a quantifier or alternation, such
-/// as `(a+)+` or `(a|b)*`.
+/// backreferences, lookaround, named/non-trivial `(?` groups, a quantified
+/// group that itself contains a quantifier or alternation, such as `(a+)+`
+/// or `(a|b)*`, and more than one unbounded repeat (`*`, `+`, `{n,}`), such
+/// as `a*a*b` or `.*.*=x`, whose backtracking grows with each extra repeat.
 fn risky_regex(p: &str) -> bool {
     let b = p.as_bytes();
     let mut stack: Vec<bool> = Vec::new(); // does this group contain a quantifier/alternation?
+    let mut unbounded = 0;
     let mut i = 0;
     while i < b.len() {
         match b[i] {
@@ -335,6 +337,20 @@ fn risky_regex(p: &str) -> bool {
                 }
             }
             b'*' | b'+' | b'?' | b'{' | b'|' => {
+                let open_ended = match b[i] {
+                    b'*' | b'+' => true,
+                    // `{n,}` has no upper bound; `{n}` and `{n,m}` do.
+                    b'{' => p[i..]
+                        .find('}')
+                        .is_some_and(|end| p[i..i + end].ends_with(',')),
+                    _ => false,
+                };
+                if open_ended {
+                    unbounded += 1;
+                    if unbounded > 1 {
+                        return true;
+                    }
+                }
                 if let Some(top) = stack.last_mut() {
                     *top = true;
                 }
@@ -643,6 +659,10 @@ mod tests {
             "(?<!a)b",
             "(?<name>a)",
             "(?i)a",
+            "a*a*a*a*a*b",
+            ".*.*.*=x",
+            "a+.*b",
+            "a{2,}b*",
             &"a".repeat(MAX_REGEX + 1),
             "[",
             "",
@@ -659,7 +679,8 @@ mod tests {
             "(?:foo|bar)",
             "(foo|bar)",
             "\\d{3}-\\d{4}",
-            "[a-z]+ [0-9]+",
+            "[a-z]+ [0-9]{1,4}",
+            "[*+]+x",
             "a.*b",
         ] {
             assert!(

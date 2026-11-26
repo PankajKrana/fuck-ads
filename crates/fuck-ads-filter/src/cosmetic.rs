@@ -139,10 +139,6 @@ impl CosmeticFilter {
             action,
         })
     }
-
-    pub fn is_generic(&self) -> bool {
-        self.domains.include.is_empty()
-    }
 }
 
 /// Splits scriptlet arguments on unescaped commas.
@@ -364,7 +360,7 @@ mod tests {
         assert!(!f.domains.matches(Some("sub.example.com")));
 
         let f = CosmeticFilter::parse("##div[id^=\"ad-\"]").unwrap();
-        assert!(f.is_generic());
+        assert!(f.domains.include.is_empty());
 
         let f = CosmeticFilter::parse("example.com#@#.ad").unwrap();
         assert!(f.exception);
