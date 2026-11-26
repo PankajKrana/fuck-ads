@@ -76,8 +76,8 @@ jobs:
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, deb: arm64 }
           # The Intel build is cross-compiled on Apple silicon; its tests run
           # natively in the aarch64 job.
-          - { os: macos-14,         target: x86_64-apple-darwin, cross: true }
-          - { os: macos-14,         target: aarch64-apple-darwin }
+          - { os: macos-15,         target: x86_64-apple-darwin, cross: true }
+          - { os: macos-15,         target: aarch64-apple-darwin }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
