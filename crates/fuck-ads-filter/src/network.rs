@@ -306,6 +306,11 @@ impl NetworkFilter {
         if self.party.is_some() || self.domains.is_some() || self.cosmetic.any() {
             return None;
         }
+        // `@@…$document` only stops filtering on that site's pages; it must
+        // not unblock the host (and its subdomains) everywhere.
+        if self.exception && self.types == ResourceTypes(ResourceType::Document.bit()) {
+            return None;
+        }
         // Type-restricted filters do not apply to whole hosts, except the
         // "everything" forms (`$all`, `$document`, or the default set).
         if self.explicit_types

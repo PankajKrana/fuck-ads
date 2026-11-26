@@ -94,8 +94,9 @@ Linux)
     fi
     ;;
 Darwin)
+    $SUDO launchctl bootout system/com.fuckads.sync 2>/dev/null || true
     $SUDO launchctl bootout system/com.fuckads.daemon 2>/dev/null || true
-    $SUDO rm -f /Library/LaunchDaemons/com.fuckads.daemon.plist /etc/newsyslog.d/fuck-ads.conf
+    $SUDO rm -f /Library/LaunchDaemons/com.fuckads.sync.plist /Library/LaunchDaemons/com.fuckads.daemon.plist /etc/newsyslog.d/fuck-ads.conf
     STATE="/Library/Application Support/FuckAds/system-state.json"
     KEEP_STATE=""
     if restore_from_state "$STATE"; then

@@ -21,6 +21,8 @@ use std::path::{Path, PathBuf};
 const LAUNCHCTL: &str = "/bin/launchctl";
 const NETWORKSETUP: &str = "/usr/sbin/networksetup";
 const PLIST: &str = "/Library/LaunchDaemons/com.fuckads.daemon.plist";
+const SYNC_PLIST: &str = "/Library/LaunchDaemons/com.fuckads.sync.plist";
+const SYNC_TARGET: &str = "system/com.fuckads.sync";
 const PFCTL: &str = "/sbin/pfctl";
 const PF_RULES_FILE: &str = "/Library/Application Support/FuckAds/enforce-dns.pf";
 
@@ -168,6 +170,11 @@ impl Platform for MacOs {
         } else {
             run(LAUNCHCTL, &["bootstrap", "system", PLIST])
                 .context("launchctl could not load the FuckAds daemon")?;
+        }
+        // Stays loaded after `stop`/`disable`: `_sync-dns` does nothing then.
+        if Path::new(SYNC_PLIST).exists() && !succeeds(LAUNCHCTL, &["print", SYNC_TARGET]) {
+            run(LAUNCHCTL, &["bootstrap", "system", SYNC_PLIST])
+                .context("launchctl could not load the FuckAds DNS check")?;
         }
         Ok(())
     }
@@ -414,6 +421,7 @@ impl Platform for MacOs {
     fn install_service(&self, exe: &Path) -> Result<()> {
         const TEMPLATE: &str = include_str!("../../../platforms/macos/com.fuckads.daemon.plist");
         const NEWSYSLOG: &str = include_str!("../../../platforms/macos/newsyslog-fuck-ads.conf");
+        const SYNC_TEMPLATE: &str = include_str!("../../../platforms/macos/com.fuckads.sync.plist");
         if crate::user_ids(SERVICE_USER_MACOS).is_none() {
             create_service_account()?;
         }
@@ -434,10 +442,17 @@ impl Platform for MacOs {
         let plist = crate::render_service_template(TEMPLATE, exe)?;
         fuck_ads_config::fs::write_atomic(Path::new(PLIST), plist.as_bytes(), 0o644)?;
         crate::chown(Path::new(PLIST), 0, 0)?;
+        let sync = crate::render_service_template(SYNC_TEMPLATE, exe)?;
+        fuck_ads_config::fs::write_atomic(Path::new(SYNC_PLIST), sync.as_bytes(), 0o644)?;
+        crate::chown(Path::new(SYNC_PLIST), 0, 0)?;
         Ok(())
     }
 
     fn remove_service(&self) -> Result<()> {
+        if succeeds(LAUNCHCTL, &["print", SYNC_TARGET]) {
+            let _ = run(LAUNCHCTL, &["bootout", SYNC_TARGET]);
+        }
+        let _ = std::fs::remove_file(SYNC_PLIST);
         if loaded() {
             let _ = run(LAUNCHCTL, &["bootout", &target()]);
         }

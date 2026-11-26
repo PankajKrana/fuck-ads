@@ -109,7 +109,14 @@ async fn apply_dns(
         }
     };
     if let Err(e) = platform.apply_dns(&plan, listen) {
-        let _ = platform.restore_dns(&plan);
+        // Keep the backup when the restore fails: it is the only copy of the
+        // user's settings, and `disable` retries from it.
+        if let Err(restore) = platform.restore_dns(&plan) {
+            return Err(e.context(format!(
+                "could not change system DNS settings, and restoring the previous ones also \
+                 failed ({restore:#}). Retry with: sudo fuck-ads disable"
+            )));
+        }
         state.dns = None;
         state.save(&state_file)?;
         return Err(e.context("could not change system DNS settings; previous settings restored"));
@@ -291,11 +298,13 @@ pub async fn enforce_dns(ctx: &Ctx, action: &EnforceDnsAction) -> Result<()> {
                 &FirewallPlan { daemon_uid: uid },
             )
             .await?;
+            state.enforce_dns = true;
+            state.save(&ctx.paths.system_state_file())?;
             if !ctx.json {
                 println!(
                     "\nApps can no longer reach public DNS servers directly; they fall back to the \
-                     system resolver.\nThe rules do not survive a reboot. Re-run this command (or \
-                     `sudo fuck-ads start`) afterwards.\nRemove them with: sudo fuck-ads enforce-dns off"
+                     system resolver.\nThe rules are re-applied whenever the service starts.\n\
+                     Remove them with: sudo fuck-ads enforce-dns off"
                 );
             }
             Ok(())
@@ -544,10 +553,13 @@ pub async fn enable(ctx: &Ctx) -> Result<()> {
     let state_file = ctx.paths.system_state_file();
     let mut state = SystemState::load(&state_file)?;
 
-    if platform.service_status() == ServiceStatus::NotInstalled {
-        let exe = std::env::current_exe().context("cannot locate the fuck-ads executable")?;
-        let exe = fuck_ads_platform::stable_exe_path(&exe);
-        platform.install_service(&exe)?;
+    // Installed on every enable so a copied binary (`service_exe`) and the
+    // service files pick up upgrades; `install_service` is idempotent.
+    let newly_installed = platform.service_status() == ServiceStatus::NotInstalled;
+    let exe = std::env::current_exe().context("cannot locate the fuck-ads executable")?;
+    let exe = fuck_ads_platform::service_exe(&fuck_ads_platform::stable_exe_path(&exe))?;
+    platform.install_service(&exe)?;
+    if newly_installed {
         step(
             ctx,
             &format!("Service installed ({})", platform.service_file().display()),
@@ -623,9 +635,9 @@ pub async fn start(ctx: &Ctx) -> Result<()> {
     step(ctx, "Service started");
     if state.enabled && !listen.is_empty() {
         apply_dns(ctx, platform.as_ref(), &mut state, &listen).await?;
-        // `stop` removed the bypass rules; bring them back if they were on.
+        // `stop` or a reboot removed the bypass rules; bring them back if they were on.
         if state.enforce_dns
-            && state.firewall.is_none()
+            && !platform.firewall_active()
             && let Some(uid) = service_uid()
             && let Err(e) = apply_firewall(
                 ctx,
@@ -767,9 +779,13 @@ pub async fn sync_dns(ctx: &Ctx) -> Result<()> {
         fail_open(ctx, platform.as_ref(), &mut state);
         return Ok(());
     }
-    apply_dns(ctx, platform.as_ref(), &mut state, &listen).await?;
+    // macOS runs this every 30 s; re-applying would flush the DNS cache each time.
+    if state.dns.is_none() || system_dns_routing().await != DnsRouting::Active {
+        apply_dns(ctx, platform.as_ref(), &mut state, &listen).await?;
+    }
+    // Checks the live rules, not the state file: a reboot drops them.
     if state.enforce_dns
-        && state.firewall.is_none()
+        && !platform.firewall_active()
         && let Some(uid) = service_uid()
     {
         apply_firewall(
@@ -906,6 +922,10 @@ pub async fn uninstall(ctx: &Ctx, yes: bool, purge: bool) -> Result<()> {
     for p in browser::uninstall(&browser::system_locations()) {
         println!("removed {}", p.display());
     }
+    remove_known_dir(
+        Path::new(fuck_ads_platform::ROOT_BIN_DIR),
+        &[fuck_ads_platform::ROOT_BIN_DIR],
+    );
 
     if cfg!(target_os = "macos") {
         let base = "/Library/Application Support/FuckAds";

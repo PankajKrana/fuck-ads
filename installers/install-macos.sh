@@ -19,6 +19,7 @@ SHARE_DIR="$PREFIX/share/fuck-ads"
 BASE_DIR="/Library/Application Support/FuckAds"
 LOG_DIR=/Library/Logs/FuckAds
 PLIST=/Library/LaunchDaemons/com.fuckads.daemon.plist
+SYNC_PLIST=/Library/LaunchDaemons/com.fuckads.sync.plist
 SERVICE_USER=_fuck-ads
 
 say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
@@ -68,7 +69,8 @@ if [ -n "$SRC_ROOT" ] || [ "${FUCK_ADS_FROM_SOURCE:-0}" = "1" ]; then
     mkdir -p "$WORK/pkg/share/filters" "$WORK/pkg/platforms"
     cp "$SRC_ROOT/target/release/fuck-ads" "$WORK/pkg/fuck-ads"
     cp "$SRC_ROOT"/filters/*.txt "$WORK/pkg/share/filters/"
-    cp "$SRC_ROOT/platforms/macos/com.fuckads.daemon.plist" "$SRC_ROOT/platforms/macos/newsyslog-fuck-ads.conf" "$WORK/pkg/platforms/"
+    cp "$SRC_ROOT/platforms/macos/com.fuckads.daemon.plist" "$SRC_ROOT/platforms/macos/com.fuckads.sync.plist" \
+       "$SRC_ROOT/platforms/macos/newsyslog-fuck-ads.conf" "$WORK/pkg/platforms/"
     if [ -x "$SRC_ROOT/browser/build.sh" ]; then
         "$SRC_ROOT/browser/build.sh" >/dev/null && cp -R "$SRC_ROOT/browser/dist" "$WORK/pkg/share/browser"
     fi
@@ -152,6 +154,9 @@ $SUDO install -m 0644 "$WORK/pkg/platforms/newsyslog-fuck-ads.conf" /etc/newsysl
 sed "s#/usr/local/bin/fuck-ads#$BIN_DIR/fuck-ads#g" "$WORK/pkg/platforms/com.fuckads.daemon.plist" > "$WORK/daemon.plist"
 plutil -lint "$WORK/daemon.plist" >/dev/null || die "invalid LaunchDaemon plist"
 $SUDO install -m 0644 -o root -g wheel "$WORK/daemon.plist" "$PLIST"
+sed "s#/usr/local/bin/fuck-ads#$BIN_DIR/fuck-ads#g" "$WORK/pkg/platforms/com.fuckads.sync.plist" > "$WORK/sync.plist"
+plutil -lint "$WORK/sync.plist" >/dev/null || die "invalid LaunchDaemon plist"
+$SUDO install -m 0644 -o root -g wheel "$WORK/sync.plist" "$SYNC_PLIST"
 
 $SUDO "$BIN_DIR/fuck-ads" browser install --system >/dev/null || warn "could not register browser integration"
 
@@ -163,6 +168,7 @@ if [ "$UPGRADE" = "1" ]; then
     say "Restarting the upgraded service"
     # Reload the plist in case it changed, then restart.
     $SUDO launchctl bootout system/com.fuckads.daemon 2>/dev/null || true
+    $SUDO launchctl bootout system/com.fuckads.sync 2>/dev/null || true
     $SUDO "$BIN_DIR/fuck-ads" start
 elif [ "${FUCK_ADS_NO_ENABLE:-0}" != "1" ]; then
     say "Enabling protection"

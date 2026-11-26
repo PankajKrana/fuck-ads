@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.fuckads.sync</string>
+    <!-- launchd has no stop hook like systemd's ExecStopPost, so this checks
+         every 30 seconds: system DNS goes back to the previous resolvers while
+         the daemon is not answering, and through FuckAds again once it is. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/fuck-ads</string>
+        <string>_sync-dns</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>30</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
