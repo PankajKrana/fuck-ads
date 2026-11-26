@@ -182,3 +182,19 @@ async fn check_explains_decisions() {
     assert!(!c.blocked && c.reason.contains("allowlisted"));
     d.shutdown().await;
 }
+
+#[tokio::test]
+async fn allowlisting_a_cloaked_name_unblocks_it() {
+    let env = TestEnv::new().await;
+    let d = env.start().await;
+    let dns = v4(&d.dns_addrs);
+    // cloaked.example is a CNAME for the listed tracker.example.
+    assert!(is_blocked(dns, "cloaked.example.").await);
+    ok(env
+        .control(Request::Allow {
+            domain: "cloaked.example".into(),
+        })
+        .await);
+    assert!(!is_blocked(dns, "cloaked.example.").await);
+    d.shutdown().await;
+}

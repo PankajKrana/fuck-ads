@@ -377,16 +377,18 @@ impl Updater {
         f(state.lists.entry(name.to_string()).or_default());
     }
 
-    /// Moves staged files into place, keeping the previous version.
-    fn install(&self, names: &[String]) -> std::io::Result<()> {
-        for name in names {
+    /// Moves staged files into place, keeping the previous version. On
+    /// failure, also returns how many of `names` were touched and need a
+    /// rollback; rolling back untouched lists would downgrade or delete them.
+    fn install(&self, names: &[String]) -> Result<(), (usize, std::io::Error)> {
+        for (i, name) in names.iter().enumerate() {
             let current = self.list_path(name, "");
             let prev = self.list_path(name, ".prev");
             let staged = self.list_path(name, ".new");
             if current.is_file() {
-                std::fs::rename(&current, &prev)?;
+                std::fs::rename(&current, &prev).map_err(|e| (i, e))?;
             }
-            std::fs::rename(&staged, &current)?;
+            std::fs::rename(&staged, &current).map_err(|e| (i + 1, e))?;
         }
         Ok(())
     }
@@ -467,8 +469,8 @@ impl Updater {
             .iter()
             .any(|l| l.enabled && l.path.is_some());
         if !outcome.changed.is_empty() || has_local {
-            if let Err(e) = self.install(&outcome.changed) {
-                self.rollback(&outcome.changed);
+            if let Err((touched, e)) = self.install(&outcome.changed) {
+                self.rollback(&outcome.changed[..touched]);
                 outcome.rolled_back = true;
                 outcome.error = Some(format!("install failed: {e}"));
             } else {

@@ -2,9 +2,7 @@
 
 use crate::control;
 use crate::protocol::{CheckInfo, ListStatus, Request, Response, StatsInfo, StatusInfo};
-use crate::rules::{
-    LiveFilter, MAX_USER_ENTRIES, UserRules, build_engine, list_source_path, parse_user_domain,
-};
+use crate::rules::{LiveFilter, MAX_USER_ENTRIES, UserRules, build_engine, parse_user_domain};
 use crate::update::{Fetcher, HttpFetcher, Updater};
 use anyhow::{Context, Result};
 use fuck_ads_config::{Config, Paths};
@@ -14,11 +12,10 @@ use fuck_ads_filter::{Request as FilterRequest, ResourceType, UrlVerdict};
 use fuck_ads_stats::StatsStore;
 use serde_json::Value;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::{Notify, watch};
+use tokio::sync::watch;
 
 /// How often statistics are flushed to disk (bounded disk writes).
 const STATS_FLUSH: Duration = Duration::from_secs(300);
@@ -103,7 +100,6 @@ pub struct Daemon {
     user_rules: Mutex<UserRules>,
     browser_seen: AtomicU64,
     browser_name: Mutex<Option<String>>,
-    update_now: Notify,
     export_cache: Mutex<Option<(u64, Arc<Vec<Value>>)>>,
 }
 
@@ -275,7 +271,6 @@ impl Daemon {
             user_rules: Mutex::new(user_rules),
             browser_seen: AtomicU64::new(0),
             browser_name: Mutex::new(None),
-            update_now: Notify::new(),
             export_cache: Mutex::new(None),
         });
 
@@ -324,7 +319,6 @@ impl Daemon {
             };
             tokio::select! {
                 _ = tokio::time::sleep(delay) => {}
-                _ = self.update_now.notified() => {}
                 _ = shutdown.changed() => return,
             }
             let outcome = self.updater.run(&self.config, &self.filter, false).await;
@@ -433,7 +427,6 @@ impl Daemon {
                     .or_else(|| l.path.as_ref().map(|p| p.display().to_string()))
                     .or_else(|| l.bundled.as_ref().map(|b| format!("bundled:{b}")))
                     .unwrap_or_default();
-                let _ = list_source_path(l, &self.paths);
                 ListStatus {
                     name: l.name.clone(),
                     enabled: l.enabled,
@@ -526,7 +519,12 @@ impl Daemon {
                     other_blocked: d.other_blocked,
                     cache_hits: d.cache_hits,
                     upstream_failures: d.upstream_failures,
-                    top_blocked: d.top_blocked(10),
+                    // Blocked domains reveal browsing; other local users get counts only.
+                    top_blocked: if privileged {
+                        d.top_blocked(10)
+                    } else {
+                        Vec::new()
+                    },
                 })
             }
             Request::StatsReset => {
@@ -798,15 +796,6 @@ impl Daemon {
                 })
             }
         }
-    }
-
-    /// Triggers the background updater immediately.
-    pub fn request_update(&self) {
-        self.update_now.notify_one();
-    }
-
-    pub fn socket_path(&self) -> PathBuf {
-        self.paths.socket.clone()
     }
 }
 

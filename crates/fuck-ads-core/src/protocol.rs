@@ -15,12 +15,11 @@ pub const MAX_REQUEST_BYTES: usize = 256 * 1024;
 pub enum Request {
     // --- read-only (any local user) ---
     Status,
+    /// `top_blocked` is only filled in for privileged peers.
     Stats {
         #[serde(default)]
         days: Option<u32>,
     },
-    ListAllow,
-    ListBlock,
     Rules,
     Check {
         domain: String,
@@ -56,6 +55,9 @@ pub enum Request {
     Scriptlets,
     SafariRules,
     // --- privileged (root or the service account) ---
+    // The user lists and blocked domains reveal which sites people visit.
+    ListAllow,
+    ListBlock,
     StatsReset,
     Reload,
     Update {
@@ -88,7 +90,9 @@ impl Request {
     pub fn is_privileged(&self) -> bool {
         matches!(
             self,
-            Request::StatsReset
+            Request::ListAllow
+                | Request::ListBlock
+                | Request::StatsReset
                 | Request::Reload
                 | Request::Update { .. }
                 | Request::Allow { .. }

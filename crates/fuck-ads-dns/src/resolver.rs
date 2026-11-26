@@ -29,6 +29,12 @@ pub enum Decision {
 /// layer has no knowledge of how rules are stored or updated.
 pub trait QueryFilter: Send + Sync + 'static {
     fn check(&self, host: &str) -> Decision;
+
+    /// Whether the user explicitly allowed `host`; such names skip CNAME
+    /// uncloaking, or the user could never unblock a cloaked site.
+    fn explicitly_allowed(&self, _host: &str) -> bool {
+        false
+    }
 }
 
 /// Settings derived from [`Config`].
@@ -233,7 +239,10 @@ impl Resolver {
 
         // CNAME uncloaking: trackers hide behind first-party CNAMEs
         // (metrics.site.example → site.tracker.example).
-        for record in &response.answers {
+        let allowed = host
+            .as_deref()
+            .is_some_and(|h| self.filter.explicitly_allowed(h));
+        for record in response.answers.iter().filter(|_| !allowed) {
             if let RData::CNAME(target) = &record.data
                 && let Some(target) = normalize_hostname(&target.0.to_ascii())
                 && let Decision::Block { domain, category } = self.filter.check(&target)

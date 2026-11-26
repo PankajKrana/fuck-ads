@@ -261,6 +261,10 @@ impl QueryFilter for LiveFilter {
     fn check(&self, host: &str) -> Decision {
         self.explain(host).0
     }
+
+    fn explicitly_allowed(&self, host: &str) -> bool {
+        matches!(self.overridden(host), Some((Decision::Allow, _)))
+    }
 }
 
 /// Where a list's current content comes from.

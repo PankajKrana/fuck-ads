@@ -125,15 +125,22 @@ pub async fn serve<H, F>(
             },
             _ = shutdown.changed() => return,
         };
-        let Ok(permit) = limit.clone().try_acquire_owned() else {
-            continue;
+        let privileged = match stream.peer_cred() {
+            Ok(cred) => cred.uid() == 0 || cred.uid() == own_uid,
+            Err(_) => false,
+        };
+        // Privileged peers bypass the limit, so another local user holding
+        // every slot cannot lock root out.
+        let permit = if privileged {
+            None
+        } else {
+            let Ok(permit) = limit.clone().try_acquire_owned() else {
+                continue;
+            };
+            Some(permit)
         };
         let handler = handler.clone();
         tokio::spawn(async move {
-            let privileged = match stream.peer_cred() {
-                Ok(cred) => cred.uid() == 0 || cred.uid() == own_uid,
-                Err(_) => false,
-            };
             let _ = connection(stream, privileged, handler).await;
             drop(permit);
         });
@@ -248,4 +255,35 @@ pub async fn request(
     timeout: Duration,
 ) -> Result<Response, ControlError> {
     Client::connect(path).await?.request(req, timeout).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test]
+    async fn unprivileged_peers_cannot_change_state() {
+        let (server, client) = UnixStream::pair().unwrap();
+        let called = Arc::new(AtomicBool::new(false));
+        let seen = called.clone();
+        let handler = Arc::new(move |_: Request, _: bool| {
+            seen.store(true, Ordering::SeqCst);
+            async { Response::ok("changed") }
+        });
+        let served = tokio::spawn(connection(server, false, handler));
+
+        let (read, mut write) = client.into_split();
+        write
+            .write_all(b"{\"cmd\":\"set_enabled\",\"enabled\":false}\n")
+            .await
+            .unwrap();
+        let mut reply = String::new();
+        BufReader::new(read).read_line(&mut reply).await.unwrap();
+        drop(write);
+        served.await.unwrap().unwrap();
+
+        assert!(reply.contains("permission denied"), "{reply}");
+        assert!(!called.load(Ordering::SeqCst));
+    }
 }

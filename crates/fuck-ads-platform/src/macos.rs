@@ -63,6 +63,15 @@ fn parse_dns_servers(out: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether `servers` is set and names only loopback resolvers (FuckAds).
+fn only_loopback(servers: &[String]) -> bool {
+    !servers.is_empty()
+        && servers.iter().all(|s| {
+            s.parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+        })
+}
+
 /// Parses `networksetup -getautoproxyurl` ("URL: ...\nEnabled: Yes").
 fn parse_autoproxy(out: &str) -> (Option<String>, bool) {
     let mut url = None;
@@ -250,6 +259,21 @@ impl Platform for MacOs {
                 errors.push(format!("{service}: {e}"));
             }
         }
+        // A service renamed since the backup still points at us under its
+        // new name; give it back to DHCP so it is not left without DNS.
+        for service in existing
+            .iter()
+            .filter(|s| !services.iter().any(|(b, _)| b == *s))
+        {
+            let current = stdout(NETWORKSETUP, &["-getdnsservers", service])
+                .map(|out| parse_dns_servers(&out))
+                .unwrap_or_default();
+            if only_loopback(&current)
+                && let Err(e) = set_dns(service, &[])
+            {
+                errors.push(format!("{service}: {e}"));
+            }
+        }
         self.flush_dns_cache();
         if !errors.is_empty() {
             bail!("could not restore DNS for: {}", errors.join("; "));
@@ -429,10 +453,14 @@ impl Platform for MacOs {
             .context("service account missing after creation")?;
         let base = Path::new("/Library/Application Support/FuckAds");
         fuck_ads_config::fs::ensure_dir(base, 0o755)?;
-        for dir in [base.join("data"), PathBuf::from("/Library/Logs/FuckAds")] {
-            fuck_ads_config::fs::ensure_dir(&dir, 0o755)?;
-            crate::chown(&dir, uid, gid)?;
-        }
+        let data = base.join("data");
+        fuck_ads_config::fs::ensure_dir(&data, 0o755)?;
+        crate::chown(&data, uid, gid)?;
+        // Root-owned: launchd and newsyslog write here as root, so the service
+        // account must not be able to swap the log for a symlink.
+        let logs = Path::new("/Library/Logs/FuckAds");
+        fuck_ads_config::fs::ensure_dir(logs, 0o755)?;
+        crate::chown(logs, 0, 0)?;
         crate::ensure_default_config(&base.join("config.toml"))?;
         fuck_ads_config::fs::write_atomic(
             Path::new("/etc/newsyslog.d/fuck-ads.conf"),
@@ -559,6 +587,9 @@ mod tests {
             vec!["Wi-Fi", "Thunderbolt Bridge", "USB 10/100/1000 LAN"]
         );
         assert!(parse_dns_servers("There aren't any DNS Servers set on Wi-Fi.").is_empty());
+        assert!(only_loopback(&["127.0.0.1".into(), "::1".into()]));
+        assert!(!only_loopback(&["127.0.0.1".into(), "1.1.1.1".into()]));
+        assert!(!only_loopback(&[]));
         assert_eq!(
             parse_dns_servers("1.1.1.1\n2606:4700::1111\n"),
             vec!["1.1.1.1", "2606:4700::1111"]
