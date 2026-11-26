@@ -4,8 +4,8 @@
 class FuckAds < Formula
   desc "System-wide ad and tracker blocking (filtering DNS + browser extensions)"
   homepage "https://github.com/PankajKrana/fuck-ads"
-  url "https://github.com/PankajKrana/fuck-ads/archive/refs/tags/v0.2.0.tar.gz"
-  sha256 "80194e9262bbe107b90d27fe8bf505450b2ad27f9e8f4364f0f558f4cb606bf4"
+  url "https://github.com/PankajKrana/fuck-ads/archive/refs/tags/v0.3.0.tar.gz"
+  sha256 "031c47b7893c2101c48fec83245fd9e3b6fbdbb1710fa2bdb30e74003ac890c2"
   license "MIT"
   head "https://github.com/PankajKrana/fuck-ads.git", branch: "main"
 
