@@ -271,11 +271,6 @@ impl DomainConstraint {
         }
         self.include.is_empty() || self.include.iter().any(|p| p.matches(host))
     }
-
-    /// True if the constraint only excludes (it applies "everywhere except").
-    pub fn is_negation_only(&self) -> bool {
-        self.include.is_empty() && !self.exclude.is_empty()
-    }
 }
 
 /// Extracts the hostname from an absolute URL (`scheme://[user@]host[:port]/...`).

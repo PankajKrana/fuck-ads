@@ -67,8 +67,7 @@ and swap the Unix socket for a named pipe in `fuck-ads-core::control`.
   list servers) are never blocked.
 * **Query-parameter stripping.** `$removeparam=name` filters (literal names
   only; regex and exception forms are skipped) never block and never reach
-  the DNS layer. `Engine::strip_params` applies them to a request URL, and
-  the DNR export emits them as lowest-priority `redirect` rules with a
+  the DNS layer. The DNR export emits them as lowest-priority `redirect` rules with a
   `queryTransform`, so they only run when nothing blocks or allows the
   request. Safari's content blocker cannot rewrite URLs, so they are
   not exported there.
