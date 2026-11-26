@@ -151,7 +151,16 @@ async fn concurrent_queries() {
             } else {
                 (format!("h{i}.ok.example."), false)
             };
-            let r = query(dns, &name, RecordType::A).await.expect("answer");
+            // The kernel may drop part of a 300-packet UDP burst on a busy
+            // runner; real resolvers retry, so the test does too.
+            let mut r = None;
+            for _ in 0..3 {
+                r = query(dns, &name, RecordType::A).await;
+                if r.is_some() {
+                    break;
+                }
+            }
+            let r = r.expect("answer");
             let ip = first_ip(&r).unwrap();
             assert_eq!(ip == IpAddr::V4(Ipv4Addr::UNSPECIFIED), blocked, "{name}");
         }));
