@@ -1,6 +1,6 @@
 # Maintainer: FuckAds maintainers <maintainers@example.com>
 pkgname=fuck-ads
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="System-wide ad and tracker blocking (filtering DNS resolver + browser extensions)"
 arch=('x86_64' 'aarch64')
