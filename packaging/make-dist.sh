@@ -14,6 +14,7 @@ mkdir -p "$STAGE/share/filters" "$STAGE/platforms" "$OUT"
 install -m 0755 "$BIN" "$STAGE/fuck-ads"
 cp "$ROOT"/filters/*.txt "$STAGE/share/filters/"
 cp "$ROOT/platforms/linux/fuck-ads.service" "$ROOT/platforms/macos/com.fuckads.daemon.plist" \
+   "$ROOT/platforms/macos/com.fuckads.sync.plist" \
    "$ROOT/platforms/macos/newsyslog-fuck-ads.conf" "$STAGE/platforms/"
 "$ROOT/browser/build.sh" >/dev/null
 mkdir -p "$STAGE/share/browser"

@@ -23,11 +23,19 @@ pub struct UserRules {
 }
 
 impl UserRules {
+    /// Loads the rules. A file that does not parse is renamed to
+    /// `<name>.bad` first, so the next save cannot overwrite the user's lists.
     pub fn load(path: &Path) -> std::io::Result<UserRules> {
         match std::fs::read(path) {
             Ok(bytes) => {
-                let mut rules: UserRules = serde_json::from_slice(&bytes)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                let mut rules: UserRules = serde_json::from_slice(&bytes).map_err(|e| {
+                    let bad = path.with_extension("json.bad");
+                    let kept = match std::fs::rename(path, &bad) {
+                        Ok(()) => format!("moved to {}", bad.display()),
+                        Err(re) => format!("could not move it aside: {re}"),
+                    };
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}; {kept}"))
+                })?;
                 // Re-validate on load: the file could have been edited.
                 rules.allow = rules
                     .allow
@@ -371,6 +379,18 @@ pub fn self_test(new: &Engine, old: &Engine) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corrupt_rules_file_is_kept_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("user-rules.json");
+        std::fs::write(&path, br#"{"allow":["a.example",]}"#).unwrap();
+        let err = UserRules::load(&path).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(!path.exists());
+        let bad = std::fs::read(dir.path().join("user-rules.json.bad")).unwrap();
+        assert_eq!(bad, br#"{"allow":["a.example",]}"#);
+    }
 
     #[test]
     fn user_domain_parsing() {

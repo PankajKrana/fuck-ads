@@ -98,11 +98,18 @@ pub struct StatsStore {
 
 impl StatsStore {
     /// Creates a store, loading existing data from `path` if present.
-    /// A corrupt file is ignored (statistics are not worth failing over).
+    /// A corrupt file is moved to `<name>.bad` and the store starts empty
+    /// (statistics are not worth failing over, but not worth overwriting).
     pub fn open(path: Option<&Path>, enabled: bool, record_domains: bool) -> StatsStore {
         let days = path
-            .and_then(|p| std::fs::read(p).ok())
-            .and_then(|bytes| serde_json::from_slice::<StatsFile>(&bytes).ok())
+            .and_then(|p| {
+                let bytes = std::fs::read(p).ok()?;
+                let parsed = serde_json::from_slice::<StatsFile>(&bytes).ok();
+                if parsed.is_none() {
+                    let _ = std::fs::rename(p, p.with_extension("json.bad"));
+                }
+                parsed
+            })
             .map(|f| f.days)
             .unwrap_or_default();
         StatsStore {
@@ -263,6 +270,19 @@ mod tests {
         assert_eq!(again.today(), t);
         again.reset();
         assert_eq!(again.today(), DayStats::default());
+    }
+
+    #[test]
+    fn corrupt_file_is_kept_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stats.json");
+        std::fs::write(&path, b"{not json").unwrap();
+        let s = StatsStore::open(Some(&path), true, true);
+        assert_eq!(s.today(), DayStats::default());
+        assert_eq!(
+            std::fs::read(dir.path().join("stats.json.bad")).unwrap(),
+            b"{not json"
+        );
     }
 
     #[test]

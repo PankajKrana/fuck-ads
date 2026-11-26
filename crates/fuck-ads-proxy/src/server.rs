@@ -288,7 +288,11 @@ async fn handle(mut client: TcpStream, local: SocketAddr, ctx: &Ctx) {
 /// connection (a client cannot slip further requests past the filter).
 /// `Upgrade` requests (WebSocket) keep their `Connection` header.
 fn origin_request(head: &Head, path: &str, host: &str, port: u16) -> String {
-    let upgrade = head.header("upgrade").is_some();
+    // Only WebSocket may keep the connection: any other upgrade (h2c) would
+    // let further requests through unfiltered.
+    let upgrade = head
+        .header("upgrade")
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("websocket"));
     let mut out = format!("{} {} {}\r\n", head.method, path, head.version);
     let mut has_host = false;
     for (name, value) in &head.headers {
@@ -296,7 +300,7 @@ fn origin_request(head: &Head, path: &str, host: &str, port: u16) -> String {
         if lower == "proxy-connection" || lower == "proxy-authorization" || lower == "keep-alive" {
             continue;
         }
-        if lower == "connection" && !upgrade {
+        if (lower == "connection" || lower == "upgrade") && !upgrade {
             continue;
         }
         has_host |= lower == "host";
@@ -400,5 +404,11 @@ mod tests {
         let out = origin_request(&h, "/ws", "example.com", 80);
         assert!(out.contains("Connection: Upgrade\r\n"));
         assert!(!out.contains("Connection: close"));
+        let h = head(
+            "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\nUpgrade: h2c\r\nConnection: Upgrade, HTTP2-Settings\r\n\r\n",
+        );
+        let out = origin_request(&h, "/", "example.com", 80);
+        assert!(!out.to_ascii_lowercase().contains("upgrade"));
+        assert!(out.ends_with("Connection: close\r\n\r\n"));
     }
 }

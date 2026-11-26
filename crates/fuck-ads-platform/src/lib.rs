@@ -234,6 +234,48 @@ pub fn stable_exe_path(exe: &Path) -> PathBuf {
     exe.to_path_buf()
 }
 
+/// Where `enable` copies a binary that root does not control, so the
+/// service never runs a file a normal user can replace.
+pub const ROOT_BIN_DIR: &str = if cfg!(target_os = "macos") {
+    "/Library/Application Support/FuckAds/bin"
+} else {
+    "/usr/local/libexec/fuck-ads"
+};
+
+/// Whether only root can change what runs at `path`: the path, its symlink
+/// target and every directory above both are owned by root and not
+/// writable by group or others.
+pub fn root_controlled(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(real) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    [path, real.as_path()].iter().all(|p| {
+        p.ancestors().all(|a| {
+            std::fs::symlink_metadata(a).is_ok_and(|m| {
+                // A symlink's own mode bits mean nothing; its directory is checked.
+                m.uid() == 0 && (m.file_type().is_symlink() || m.mode() & 0o022 == 0)
+            })
+        })
+    })
+}
+
+/// The binary the service should run: `exe` itself when root controls it,
+/// otherwise a fresh copy in [`ROOT_BIN_DIR`] (Homebrew, `~/.cargo/bin`).
+/// Must run as root.
+pub fn service_exe(exe: &Path) -> Result<PathBuf> {
+    if root_controlled(exe) {
+        return Ok(exe.to_path_buf());
+    }
+    let dir = Path::new(ROOT_BIN_DIR);
+    fuck_ads_config::fs::ensure_dir(dir, 0o755)?;
+    let copy = dir.join("fuck-ads");
+    let bytes = std::fs::read(exe).with_context(|| format!("cannot read {}", exe.display()))?;
+    fuck_ads_config::fs::write_atomic(&copy, &bytes, 0o755)
+        .with_context(|| format!("cannot write {}", copy.display()))?;
+    Ok(copy)
+}
+
 /// Renders a service template, substituting the executable path.
 pub fn render_service_template(template: &str, exe: &Path) -> Result<String> {
     let exe = exe.to_string_lossy();
@@ -413,6 +455,16 @@ mod tests {
             stable_exe_path(Path::new("/usr/local/bin/fuck-ads")),
             PathBuf::from("/usr/local/bin/fuck-ads")
         );
+    }
+
+    #[test]
+    fn only_root_owned_binaries_are_run_in_place() {
+        assert!(root_controlled(Path::new("/bin/sh")));
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("fuck-ads");
+        std::fs::write(&exe, b"x").unwrap();
+        assert!(!root_controlled(&exe));
+        assert!(!root_controlled(&dir.path().join("missing")));
     }
 
     #[test]

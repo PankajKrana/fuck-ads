@@ -25,6 +25,9 @@ class FuckAds < Formula
       Turn protection on (installs the system service and routes DNS through it):
         sudo fuck-ads enable
 
+      The service runs a root-owned copy of the binary. After `brew upgrade fuck-ads`, run:
+        sudo fuck-ads enable && sudo fuck-ads restart
+
       Browser extensions (needed for in-page and YouTube ads):
         #{opt_share}/fuck-ads/chromium
         #{opt_share}/fuck-ads/firefox

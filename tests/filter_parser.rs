@@ -152,6 +152,16 @@ fn document_allowlisting() {
         "https://trusted.example/",
         ResourceType::Script
     ));
+
+    // A page exception must not unblock the site's ad subdomains elsewhere.
+    let e = Engine::from_rules("||ads.example.com^\n@@||example.com^$document\n");
+    assert!(blocked(&e, "ads.example.com"));
+    assert!(url_blocked(
+        &e,
+        "https://ads.example.com/x.js",
+        "https://news.example/",
+        ResourceType::Script
+    ));
 }
 
 #[test]
