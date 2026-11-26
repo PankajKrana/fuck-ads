@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FuckAds",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Blocks ads and trackers using the FuckAds system service. No data leaves your computer.",
   "browser_specific_settings": {
     "gecko": { "id": "fuck-ads@fuck-ads.local", "strict_min_version": "128.0" }

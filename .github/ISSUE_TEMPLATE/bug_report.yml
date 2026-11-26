@@ -13,7 +13,7 @@ body:
     attributes:
       label: Version
       description: Output of `fuck-ads --version`
-      placeholder: fuck-ads 0.2.0
+      placeholder: fuck-ads 0.3.0
     validations: { required: true }
   - type: dropdown
     id: platform

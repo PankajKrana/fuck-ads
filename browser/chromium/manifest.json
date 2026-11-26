@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "FuckAds",
   "short_name": "FuckAds",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Blocks ads and trackers using the FuckAds system service. No data leaves your computer.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0wDkhVYrbnaVBnQajtZ5HZDzlLz4SJtmjuxDU/cctAdFxh8Cnm3Jn45ZQAUWmEvkZkh32ol2XGSwtrIOlTNerIZlQdi8GHU0Mr6oiJ8oiq7VhfthhqU4P30uH0B0PtJHqwNspOwXlLojKfulBnDS4FnWA/UGYrcUW2gJHu01q84KSt9E6dinwTfa1lrOdO+VknhGpdlgzj+N6uurodH5OMenFjwc6BMSlKExL2OhzulyucU8T8ego4LAzBr8Ra2gJ4itqzvWEf5ByaSfiOmVZJX+88LPSkJ8n+0pFhL3ltIOfAXnNrMYIIYVvhHLTTR8U+g+lKxp5daGiK2DLB5+eQIDAQAB",
   "minimum_chrome_version": "120",
